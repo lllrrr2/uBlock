@@ -1,6 +1,6 @@
 /*******************************************************************************
 
-    uBlock Origin - a browser extension to block requests.
+    uBlock Origin - a comprehensive, efficient content blocker
     Copyright (C) 2023-present Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
@@ -20,10 +20,6 @@
 */
 
 /* globals CodeMirror, uBlockDashboard, beautifier */
-
-'use strict';
-
-/******************************************************************************/
 
 import { dom, qs$ } from './dom.js';
 import { getActualTheme } from './theme.js';
@@ -117,25 +113,25 @@ async function fetchResource(url) {
         }
     };
     switch ( mime ) {
-        case 'text/css':
-            text = beautifier.css(text, beautifierOptions);
-            break;
-        case 'text/html':
-        case 'application/xhtml+xml':
-        case 'application/xml':
-        case 'image/svg+xml':
-            text = beautifier.html(text, beautifierOptions);
-            break;
-        case 'text/javascript':
-        case 'application/javascript':
-        case 'application/x-javascript':
-            text = beautifier.js(text, beautifierOptions);
-            break;
-        case 'application/json':
-            text = beautifier.js(text, beautifierOptions);
-            break;
-        default:
-            break;
+    case 'text/css':
+        text = beautifier.css(text, beautifierOptions);
+        break;
+    case 'text/html':
+    case 'application/xhtml+xml':
+    case 'application/xml':
+    case 'image/svg+xml':
+        text = beautifier.html(text, beautifierOptions);
+        break;
+    case 'text/javascript':
+    case 'application/javascript':
+    case 'application/x-javascript':
+        text = beautifier.js(text, beautifierOptions);
+        break;
+    case 'application/json':
+        text = beautifier.js(text, beautifierOptions);
+        break;
+    default:
+        break;
     }
     return { mime, text };
 }
@@ -182,7 +178,7 @@ async function setURL(resourceURL) {
             const url = new URL(resourceURL, currentURL || undefined);
             url.hash = '';
             afterURL = url.href;
-        } catch(ex) {
+        } catch {
         }
         if ( afterURL === undefined ) { return; }
     } else {
@@ -211,7 +207,7 @@ async function setURL(resourceURL) {
     dom.attr(a, 'title', afterURL);
     addPastURLs(afterURL);
     // For unknown reasons, calling focus() synchronously does not work...
-    vAPI.setTimeout(( ) => { cmEditor.focus(); }, 1);
+    vAPI.defer.once(1).then(( ) => { cmEditor.focus(); });
 }
 
 /******************************************************************************/
@@ -284,7 +280,25 @@ async function start() {
     });
 
     dom.on('#content', 'click', '.cm-href', ev => {
-        setURL(ev.target.textContent);
+        const target = ev.target;
+        const urlParts = [ target.textContent ];
+        let previous = target;
+        for (;;) {
+            previous = previous.previousSibling;
+            if ( previous === null ) { break; }
+            if ( previous.nodeType !== 1 ) { break; }
+            if ( previous.classList.contains('cm-href') === false ) { break; }
+            urlParts.unshift(previous.textContent);
+        }
+        let next = target;
+        for (;;) {
+            next = next.nextSibling;
+            if ( next === null ) { break; }
+            if ( next.nodeType !== 1 ) { break; }
+            if ( next.classList.contains('cm-href') === false ) { break; }
+            urlParts.push(next.textContent);
+        }
+        setURL(urlParts.join(''));
     });
 }
 

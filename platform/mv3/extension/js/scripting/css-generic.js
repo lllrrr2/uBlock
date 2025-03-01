@@ -1,6 +1,6 @@
 /*******************************************************************************
 
-    uBlock Origin - a browser extension to block requests.
+    uBlock Origin Lite - a comprehensive, MV3-compliant content blocker
     Copyright (C) 2014-present Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
@@ -19,10 +19,6 @@
     Home: https://github.com/gorhill/uBlock
 */
 
-/* jshint esversion:11 */
-
-'use strict';
-
 /******************************************************************************/
 
 // Important!
@@ -30,9 +26,9 @@
 (function uBOL_cssGeneric() {
 
 const genericSelectorMap = self.genericSelectorMap || new Map();
-if ( genericSelectorMap.size === 0 ) { return; }
+delete self.genericSelectorMap;
 
-self.genericSelectorMap = undefined;
+if ( genericSelectorMap.size === 0 ) { return; }
 
 /******************************************************************************/
 
@@ -60,7 +56,7 @@ const hashFromStr = (type, s) => {
     for ( let i = 0; i < len; i += step ) {
         hash = (hash << 5) + hash ^ s.charCodeAt(i);
     }
-    return hash & 0xFF_FFFF;
+    return hash & 0xFFFFFF;
 };
 
 /******************************************************************************/
@@ -76,7 +72,11 @@ const hashFromStr = (type, s) => {
 const uBOL_idFromNode = (node, out) => {
     const raw = node.id;
     if ( typeof raw !== 'string' || raw.length === 0 ) { return; }
-    out.push(hashFromStr(0x23 /* '#' */, raw.trim()));
+    const hash = hashFromStr(0x23 /* '#' */, raw.trim());
+    const selectorList = genericSelectorMap.get(hash);
+    if ( selectorList === undefined ) { return; }
+    genericSelectorMap.delete(hash);
+    out.push(selectorList);
 };
 
 // https://github.com/uBlockOrigin/uBlock-issues/discussions/2076
@@ -89,8 +89,14 @@ const uBOL_classesFromNode = (node, out) => {
         end = s.indexOf(' ', beg);
         if ( end === beg ) { continue; }
         if ( end === -1 ) { end = len; }
-        out.push(hashFromStr(0x2E /* '.' */, s.slice(beg, end)));
+        const token = s.slice(beg, end).trimEnd();
         beg = end;
+        if ( token.length === 0 ) { continue; }
+        const hash = hashFromStr(0x2E /* '.' */, token);
+        const selectorList = genericSelectorMap.get(hash);
+        if ( selectorList === undefined ) { continue; }
+        genericSelectorMap.delete(hash);
+        out.push(selectorList);
     }
 };
 
@@ -129,24 +135,17 @@ const pendingNodes = {
 
 const uBOL_processNodes = ( ) => {
     const t0 = Date.now();
-    const hashes = [];
     const nodes = [];
     const deadline = t0 + maxSurveyTimeSlice;
     for (;;) {
         pendingNodes.next(nodes);
         if ( nodes.length === 0 ) { break; }
         for ( const node of nodes ) {
-            uBOL_idFromNode(node, hashes);
-            uBOL_classesFromNode(node, hashes);
+            uBOL_idFromNode(node, styleSheetSelectors);
+            uBOL_classesFromNode(node, styleSheetSelectors);
         }
         nodes.length = 0;
         if ( performance.now() >= deadline ) { break; }
-    }
-    for ( const hash of hashes ) {
-        const selectorList = genericSelectorMap.get(hash);
-        if ( selectorList === undefined ) { continue; }
-        styleSheetSelectors.push(selectorList);
-        genericSelectorMap.delete(hash);
     }
     surveyCount += 1;
     if ( styleSheetSelectors.length === 0 ) {
@@ -162,7 +161,8 @@ const uBOL_processNodes = ( ) => {
     if ( styleSheetTimer !== undefined ) { return; }
     styleSheetTimer = self.requestAnimationFrame(( ) => {
         styleSheetTimer = undefined;
-        uBOL_injectStyleSheet();
+        uBOL_injectCSS(`${styleSheetSelectors.join(',')}{display:none!important;}`);
+        styleSheetSelectors.length = 0;
     });
 };
 
@@ -187,17 +187,12 @@ const uBOL_processChanges = mutations => {
 
 /******************************************************************************/
 
-const uBOL_injectStyleSheet = ( ) => {
-    try {
-        const sheet = new CSSStyleSheet();
-        sheet.replace(`@layer{${styleSheetSelectors.join(',')}{display:none!important;}}`);
-        document.adoptedStyleSheets = [
-            ...document.adoptedStyleSheets,
-            sheet
-        ];
-    } catch(ex) {
-    }
-    styleSheetSelectors.length = 0;
+const uBOL_injectCSS = (css, count = 10) => {
+    chrome.runtime.sendMessage({ what: 'insertCSS', css }).catch(( ) => {
+        count -= 1;
+        if ( count === 0 ) { return; }
+        uBOL_injectCSS(css, count - 1);
+    });
 };
 
 /******************************************************************************/
