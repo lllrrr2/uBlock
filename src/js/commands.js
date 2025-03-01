@@ -1,6 +1,6 @@
 /*******************************************************************************
 
-    uBlock Origin - a browser extension to block requests.
+    uBlock Origin - a comprehensive, efficient content blocker
     Copyright (C) 2017-present Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
@@ -19,12 +19,8 @@
     Home: https://github.com/gorhill/uBlock
 */
 
-'use strict';
-
-/******************************************************************************/
-
-import µb from './background.js';
 import { hostnameFromURI } from './uri-utils.js';
+import µb from './background.js';
 
 /******************************************************************************/
 
@@ -111,19 +107,15 @@ const relaxBlockingMode = (( ) => {
         if ( noReload ) { return; }
 
         // Reload: use a timer to coalesce bursts of reload commands.
-        let timer = reloadTimers.get(tab.id);
-        if ( timer !== undefined ) {
-            clearTimeout(timer);
-        }
-        timer = vAPI.setTimeout(
-            tabId => {
+        const timer = reloadTimers.get(tab.id) || (( ) => {
+            const t = vAPI.defer.create(tabId => {
                 reloadTimers.delete(tabId);
                 vAPI.tabs.reload(tabId);
-            },
-            547,
-            tab.id
-        );
-        reloadTimers.set(tab.id, timer);
+            });
+            reloadTimers.set(tab.id, t);
+            return t;
+        })();
+        timer.offon(547, tab.id);
     };
 })();
 
@@ -140,8 +132,11 @@ vAPI.commands.onCommand.addListener(async command => {
     // Tab-specific commands
     const tab = await vAPI.tabs.getCurrent();
     if ( tab instanceof Object === false ) { return; }
+
     switch ( command ) {
     case 'launch-element-picker':
+        if ( µb.userFiltersAreEnabled() === false ) { break; }
+        /* fall through */
     case 'launch-element-zapper': {
         µb.epickerArgs.mouse = false;
         µb.elementPickerExec(
@@ -171,6 +166,13 @@ vAPI.commands.onCommand.addListener(async command => {
             name: 'no-cosmetic-filtering',
             hostname: hostnameFromURI(µb.normalizeTabURL(tab.id, tab.url)),
         });
+        break;
+    case 'toggle-javascript':
+        µb.toggleHostnameSwitch({
+            name: 'no-scripting',
+            hostname: hostnameFromURI(µb.normalizeTabURL(tab.id, tab.url)),
+        });
+        vAPI.tabs.reload(tab.id);
         break;
     default:
         break;

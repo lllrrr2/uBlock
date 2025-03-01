@@ -1,6 +1,6 @@
 /*******************************************************************************
 
-    uBlock Origin - a browser extension to block requests.
+    uBlock Origin - a comprehensive, efficient content blocker
     Copyright (C) 2014-present Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
@@ -18,8 +18,6 @@
 
     Home: https://github.com/gorhill/uBlock
 */
-
-'use strict';
 
 import { dom } from './dom.js';
 
@@ -113,18 +111,18 @@ self.uBlockDashboard.dateNowToSensibleString = function() {
 /******************************************************************************/
 
 self.uBlockDashboard.patchCodeMirrorEditor = (function() {
-    let grabFocusTimer;
     let grabFocusTarget;
 
     const grabFocus = function() {
         grabFocusTarget.focus();
-        grabFocusTimer = grabFocusTarget = undefined;
+        grabFocusTarget = undefined;
     };
+
+    const grabFocusTimer = vAPI.defer.create(grabFocus);
+
     const grabFocusAsync = function(cm) {
         grabFocusTarget = cm;
-        if ( grabFocusTimer === undefined ) {
-            grabFocusTimer = vAPI.setTimeout(grabFocus, 1);
-        }
+        grabFocusTimer.on(1);
     };
 
     // https://github.com/gorhill/uBlock/issues/3646

@@ -1,6 +1,6 @@
 /*******************************************************************************
 
-    uBlock Origin - a browser extension to block requests.
+    uBlock Origin - a comprehensive, efficient content blocker
     Copyright (C) 2014-2015 The uBlock Origin authors
     Copyright (C) 2014-present Raymond Hill
 
@@ -22,14 +22,10 @@
 
 // For background page
 
-/* globals browser */
-
-'use strict';
-
 /******************************************************************************/
 
-import webext from './webext.js';
 import { ubolog } from './console.js';
+import webext from './webext.js';
 
 /******************************************************************************/
 
@@ -42,10 +38,13 @@ vAPI.cantWebsocket =
 vAPI.canWASM = vAPI.webextFlavor.soup.has('chromium') === false;
 if ( vAPI.canWASM === false ) {
     const csp = manifest.content_security_policy;
-    vAPI.canWASM = csp !== undefined && csp.indexOf("'unsafe-eval'") !== -1;
+    vAPI.canWASM = csp !== undefined && csp.indexOf("'wasm-unsafe-eval'") !== -1;
 }
 
 vAPI.supportsUserStylesheets = vAPI.webextFlavor.soup.has('user_stylesheet');
+
+const hasOwnProperty = (o, p) =>
+    Object.prototype.hasOwnProperty.call(o, p);
 
 /******************************************************************************/
 
@@ -88,9 +87,85 @@ vAPI.app = {
 };
 
 /******************************************************************************/
-/******************************************************************************/
 
-vAPI.storage = webext.storage.local;
+// Generate segments of random six alphanumeric characters, thus one segment
+// is a value out of 36^6 = over 2x10^9 values.
+
+vAPI.generateSecret = (size = 1) => {
+    let secret = '';
+    while ( size-- ) {
+        secret += (Math.floor(Math.random() * 2176782336) + 2176782336).toString(36).slice(1);
+    }
+    return secret;
+};
+
+/*******************************************************************************
+ * 
+ * https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/storage/session
+ * 
+ * Session (in-memory) storage is promise-based in all browsers, no need for
+ * a webext polyfill. However, not all browsers supports it in MV2.
+ * 
+ * */
+
+vAPI.sessionStorage = browser.storage.session || {
+    get() {
+        return Promise.resolve();
+    },
+    set() {
+        return Promise.resolve();
+    },
+    remove() {
+        return Promise.resolve();
+    },
+    clear() {
+        return Promise.resolve();
+    },
+    unavailable: true,
+};
+
+/*******************************************************************************
+ * 
+ * Data written to and read from storage.local will be mirrored to in-memory
+ * storage.session.
+ * 
+ * Data read from storage.local will be first fetched from storage.session,
+ * then if not available, read from storage.local.
+ * 
+ * */
+
+vAPI.storage = {
+    get(key, ...args) {
+        return webext.storage.local.get(key, ...args).catch(reason => {
+            console.log(reason);
+        });
+    },
+    set(...args) {
+        return webext.storage.local.set(...args).catch(reason => {
+            console.log(reason);
+        });
+    },
+    remove(...args) {
+        return webext.storage.local.remove(...args).catch(reason => {
+            console.log(reason);
+        });
+    },
+    clear(...args) {
+        return webext.storage.local.clear(...args).catch(reason => {
+            console.log(reason);
+        });
+    },
+    QUOTA_BYTES: browser.storage.local.QUOTA_BYTES,
+};
+
+// Not all platforms support getBytesInUse
+if ( webext.storage.local.getBytesInUse instanceof Function ) {
+    vAPI.storage.getBytesInUse = function(...args) {
+        return webext.storage.local.getBytesInUse(...args).catch(reason => {
+            console.log(reason);
+        });
+    };
+}
 
 /******************************************************************************/
 /******************************************************************************/
@@ -115,9 +190,9 @@ vAPI.browserSettings = (( ) => {
 
         set: function(details) {
             for ( const setting in details ) {
-                if ( details.hasOwnProperty(setting) === false ) { continue; }
+                if ( hasOwnProperty(details, setting) === false ) { continue; }
                 switch ( setting ) {
-                case 'prefetching':
+                case 'prefetching': {
                     const enabled = !!details[setting];
                     if ( enabled ) {
                         bp.network.networkPredictionEnabled.clear({
@@ -133,9 +208,9 @@ vAPI.browserSettings = (( ) => {
                         vAPI.prefetching(enabled);
                     }
                     break;
-
-                case 'hyperlinkAuditing':
-                    if ( !!details[setting] ) {
+                }
+                case 'hyperlinkAuditing': {
+                    if ( details[setting] ) {
                         bp.websites.hyperlinkAuditingEnabled.clear({
                             scope: 'regular',
                         });
@@ -146,7 +221,7 @@ vAPI.browserSettings = (( ) => {
                         });
                     }
                     break;
-
+                }
                 case 'webrtcIPAddress': {
                     // https://github.com/uBlockOrigin/uBlock-issues/issues/1928
                     // https://www.reddit.com/r/uBlockOrigin/comments/sl7p74/
@@ -233,16 +308,19 @@ vAPI.Tabs = class {
             });
         }
         browser.tabs.onRemoved.addListener((tabId, details) => {
+            if ( vAPI.net && vAPI.net.hasUnprocessedRequest(tabId) ) {
+                vAPI.net.removeUnprocessedRequest(tabId);
+            }
             this.onRemovedHandler(tabId, details);
         });
-     }
+    }
 
-    async executeScript() {
+    async executeScript(...args) {
         let result;
         try {
-            result = await webext.tabs.executeScript(...arguments);
+            result = await webext.tabs.executeScript(...args);
         }
-        catch(reason) {
+        catch {
         }
         return Array.isArray(result) ? result : [];
     }
@@ -256,7 +334,7 @@ vAPI.Tabs = class {
         try {
             tab = await webext.tabs.get(tabId);
         }
-        catch(reason) {
+        catch {
         }
         return tab instanceof Object ? tab : null;
     }
@@ -273,7 +351,7 @@ vAPI.Tabs = class {
         try {
             await webext.tabs.insertCSS(...arguments);
         }
-        catch(reason) {
+        catch {
         }
     }
 
@@ -282,7 +360,7 @@ vAPI.Tabs = class {
         try {
             tabs = await webext.tabs.query(queryInfo);
         }
-        catch(reason) {
+        catch {
         }
         return Array.isArray(tabs) ? tabs : [];
     }
@@ -294,7 +372,7 @@ vAPI.Tabs = class {
         try {
             await webext.tabs.removeCSS(...arguments);
         }
-        catch(reason) {
+        catch {
         }
     }
 
@@ -354,22 +432,26 @@ vAPI.Tabs = class {
         // For some reasons, some platforms do not honor the left,top
         // position when specified. I found that further calling
         // windows.update again with the same position _may_ help.
+        //
+        // https://github.com/uBlockOrigin/uBlock-issues/issues/2249
+        //   Mind that the creation of the popup window might fail.
         if ( details.popup !== undefined && vAPI.windows instanceof Object ) {
-            const createDetails = {
+            const basicDetails = {
                 url: details.url,
                 type: details.popup,
             };
-            if ( details.box instanceof Object ) {
-                Object.assign(createDetails, details.box);
+            const shouldRestorePosition = details.box instanceof Object;
+            const extraDetails = shouldRestorePosition
+                ? Object.assign({}, basicDetails, details.box)
+                : basicDetails;
+            const win = await vAPI.windows.create(extraDetails);
+            if ( win === null ) {
+                if ( shouldRestorePosition === false ) { return; }
+                return vAPI.windows.create(basicDetails);
             }
-            const win = await vAPI.windows.create(createDetails);
-            if ( win === null ) { return; }
-            if ( details.box instanceof Object === false ) { return; }
-            if (
-                win.left === details.box.left &&
-                win.top === details.box.top
-            ) {
-                return;
+            if ( shouldRestorePosition === false ) { return; }
+            if ( win.left === details.box.left ) {
+                if ( win.top === details.box.top ) { return; }
             }
             vAPI.windows.update(win.id, {
                 left: details.box.left,
@@ -448,7 +530,7 @@ vAPI.Tabs = class {
         try {
             tab = await webext.tabs.update(...arguments);
         }
-        catch (reason) {
+        catch {
         }
         return tab instanceof Object ? tab : null;
     }
@@ -465,7 +547,7 @@ vAPI.Tabs = class {
             targetURL = vAPI.getURL(targetURL);
         }
 
-        vAPI.tabs.update(tabId, { url: targetURL });
+        return vAPI.tabs.update(tabId, { url: targetURL });
     }
 
     async remove(tabId) {
@@ -474,7 +556,7 @@ vAPI.Tabs = class {
         try {
             await webext.tabs.remove(tabId);
         }
-        catch (reason) {
+        catch {
         }
     }
 
@@ -487,7 +569,7 @@ vAPI.Tabs = class {
                 { bypassCache: bypassCache === true }
             );
         }
-        catch (reason) {
+        catch {
         }
     }
 
@@ -586,7 +668,7 @@ if ( webext.windows instanceof Object ) {
             try {
                 win = await webext.windows.get(...arguments);
             }
-            catch (reason) {
+            catch {
             }
             return win instanceof Object ? win : null;
         },
@@ -595,7 +677,7 @@ if ( webext.windows instanceof Object ) {
             try {
                 win = await webext.windows.create(...arguments);
             }
-            catch (reason) {
+            catch {
             }
             return win instanceof Object ? win : null;
         },
@@ -604,7 +686,7 @@ if ( webext.windows instanceof Object ) {
             try {
                 win = await webext.windows.update(...arguments);
             }
-            catch (reason) {
+            catch {
             }
             return win instanceof Object ? win : null;
         },
@@ -620,7 +702,7 @@ if ( webext.browserAction instanceof Object ) {
             try {
                 await webext.browserAction.setTitle(...arguments);
             }
-            catch (reason) {
+            catch {
             }
         },
     };
@@ -630,28 +712,28 @@ if ( webext.browserAction instanceof Object ) {
             try {
                 await webext.browserAction.setBadgeTextColor(...arguments);
             }
-            catch (reason) {
+            catch {
             }
         };
         vAPI.browserAction.setBadgeBackgroundColor = async function() {
             try {
                 await webext.browserAction.setBadgeBackgroundColor(...arguments);
             }
-            catch (reason) {
+            catch {
             }
         };
         vAPI.browserAction.setBadgeText = async function() {
             try {
                 await webext.browserAction.setBadgeText(...arguments);
             }
-            catch (reason) {
+            catch {
             }
         };
         vAPI.browserAction.setIcon = async function() {
             try {
                 await webext.browserAction.setIcon(...arguments);
             }
-            catch (reason) {
+            catch {
             }
         };
     }
@@ -676,9 +758,7 @@ if ( webext.browserAction instanceof Object ) {
 
 {
     const browserAction = vAPI.browserAction;
-    const  titleTemplate =
-        browser.runtime.getManifest().browser_action.default_title +
-        ' ({badge})';
+    const titleTemplate = `${browser.runtime.getManifest().browser_action.default_title} ({badge})`;
     const icons = [
         { path: {
             '16': 'img/icon_16-off.png',
@@ -727,7 +807,7 @@ if ( webext.browserAction instanceof Object ) {
             let data;
             try {
                 data = ctx.getImageData(0, 0, w, h);
-            } catch(ex) {
+            } catch {
             }
             return data;
         };
@@ -785,10 +865,11 @@ if ( webext.browserAction instanceof Object ) {
         const tab = await vAPI.tabs.get(tabId);
         if ( tab === null ) { return; }
 
+        const hasUnprocessedRequest = vAPI.net && vAPI.net.hasUnprocessedRequest(tabId);
         const { parts, state } = details;
-        const { badge, color } = vAPI.net && vAPI.net.hasUnprocessedRequest(tabId)
-                ? { badge: '!', color: '#FC0' }
-                : details;
+        const { badge, color } = hasUnprocessedRequest
+            ? { badge: '!', color: '#FC0' }
+            : details;
 
         if ( browserAction.setIcon !== undefined ) {
             if ( parts === undefined || (parts & 0b0001) !== 0 ) {
@@ -811,13 +892,10 @@ if ( webext.browserAction instanceof Object ) {
         // - the platform does not support browserAction.setIcon(); OR
         // - the rendering of the badge is disabled
         if ( browserAction.setTitle !== undefined ) {
-            browserAction.setTitle({
-                tabId: tab.id,
-                title: titleTemplate.replace(
-                    '{badge}',
-                    state === 1 ? (badge !== '' ? badge : '0') : 'off'
-                )
-            });
+            const title = titleTemplate.replace('{badge}',
+                state === 1 ? (badge !== '' ? badge : '0') : 'off'
+            );
+            browserAction.setTitle({ tabId: tab.id, title });
         }
 
         if ( vAPI.contextMenu instanceof Object ) {
@@ -836,7 +914,7 @@ if ( webext.browserAction instanceof Object ) {
         });
         browserAction.setBadgeText({ text });
         browserAction.setBadgeBackgroundColor({
-            color: text === '!' ? '#FFCC00' : '#666'
+            color: text === '!' ? '#FC0' : '#666'
         });
     };
 }
@@ -880,6 +958,7 @@ vAPI.messaging = {
 
     onPortDisconnect: function(port) {
         this.ports.delete(port.name);
+        void browser.runtime.lastError;
     },
 
     // https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/runtime/Port
@@ -937,71 +1016,11 @@ vAPI.messaging = {
         }
     },
 
-    broadcast: function(message) {
-        const messageWrapper = { broadcast: true, msg: message };
-        for ( const { port } of this.ports.values() ) {
-            try {
-                port.postMessage(messageWrapper);
-            } catch(ex) {
-                this.onPortDisconnect(port);
-            }
-        }
-        if ( this.defaultHandler ) {
-            this.defaultHandler(message, null, ( ) => { });
-        }
-    },
-
     onFrameworkMessage: function(request, port, callback) {
         const portDetails = this.ports.get(port.name) || {};
         const tabId = portDetails.tabId;
         const msg = request.msg;
         switch ( msg.what ) {
-        case 'connectionAccepted':
-        case 'connectionRefused': {
-            const toPort = this.ports.get(msg.fromToken);
-            if ( toPort !== undefined ) {
-                msg.tabId = tabId;
-                toPort.port.postMessage(request);
-            } else {
-                msg.what = 'connectionBroken';
-                port.postMessage(request);
-            }
-            break;
-        }
-        case 'connectionRequested':
-            msg.tabId = tabId;
-            for ( const { port: toPort } of this.ports.values() ) {
-                if ( toPort === port ) { continue; }
-                try {
-                    toPort.postMessage(request);
-                } catch (ex) {
-                    this.onPortDisconnect(toPort);
-                }
-            }
-            break;
-        case 'connectionBroken':
-        case 'connectionCheck':
-        case 'connectionMessage': {
-            const toPort = this.ports.get(
-                port.name === msg.fromToken ? msg.toToken : msg.fromToken
-            );
-            if ( toPort !== undefined ) {
-                msg.tabId = tabId;
-                toPort.port.postMessage(request);
-            } else {
-                msg.what = 'connectionBroken';
-                port.postMessage(request);
-            }
-            break;
-        }
-        case 'extendClient':
-            vAPI.tabs.executeScript(tabId, {
-                file: '/js/vapi-client-extra.js',
-                frameId: portDetails.frameId,
-            }).then(( ) => {
-                callback();
-            });
-            break;
         case 'localStorage': {
             if ( portDetails.privileged !== true ) { break; }
             const args = msg.args || [];
@@ -1010,7 +1029,7 @@ vAPI.messaging = {
             });
             break;
         }
-        case 'userCSS':
+        case 'userCSS': {
             if ( tabId === undefined ) { break; }
             const promises = [];
             if ( msg.add ) {
@@ -1041,6 +1060,9 @@ vAPI.messaging = {
             });
             break;
         }
+        default:
+            break;
+        }
     },
 
     // Use a wrapper to avoid closure and to allow reuse.
@@ -1062,7 +1084,7 @@ vAPI.messaging = {
                     msgId: this.msgId,
                     msg: response !== undefined ? response : null,
                 });
-            } catch (ex) {
+            } catch {
                 this.messaging.onPortDisconnect(this.port);
             }
             // Store for reuse
@@ -1137,24 +1159,24 @@ vAPI.messaging = {
 // https://github.com/uBlockOrigin/uBlock-issues/issues/550
 //   Support using a new secret for every network request.
 
-vAPI.warSecret = (( ) => {
-    const generateSecret = ( ) => {
-        return Math.floor(Math.random() * 982451653 + 982451653).toString(36);
-    };
-
+{
     const root = vAPI.getURL('/');
-    const secrets = [];
-    let lastSecretTime = 0;
+    const reSecret = /\?secret=(\w+)/;
+    const shortSecrets = [];
+    let lastShortSecretTime = 0;
 
-    const guard = function(details) {
-        const url = details.url;
-        const pos = secrets.findIndex(secret =>
-            url.lastIndexOf(`?secret=${secret}`) !== -1
-        );
-        if ( pos === -1 ) {
-            return { cancel: true };
-        }
-        secrets.splice(pos, 1);
+    // Long secrets are valid until revoked or uBO restarts. The realm is one
+    // value out of 36^18 = over 10^28 values.
+    const longSecrets = new Set();
+
+    const guard = details => {
+        const match = reSecret.exec(details.url);
+        if ( match === null ) { return { cancel: true }; }
+        const secret = match[1];
+        if ( longSecrets.has(secret) ) { return; }
+        const pos = shortSecrets.indexOf(secret);
+        if ( pos === -1 ) { return { cancel: true }; }
+        shortSecrets.splice(pos, 1);
     };
 
     browser.webRequest.onBeforeRequest.addListener(
@@ -1165,20 +1187,30 @@ vAPI.warSecret = (( ) => {
         [ 'blocking' ]
     );
 
-    return ( ) => {
-        if ( secrets.length !== 0 ) {
-            if ( (Date.now() - lastSecretTime) > 5000 ) {
-                secrets.splice(0);
-            } else if ( secrets.length > 256 ) {
-                secrets.splice(0, secrets.length - 192);
+    vAPI.warSecret = {
+        short: ( ) => {
+            if ( shortSecrets.length !== 0 ) {
+                if ( (Date.now() - lastShortSecretTime) > 5000 ) {
+                    shortSecrets.splice(0);
+                } else if ( shortSecrets.length > 256 ) {
+                    shortSecrets.splice(0, shortSecrets.length - 192);
+                }
             }
-        }
-        lastSecretTime = Date.now();
-        const secret = generateSecret();
-        secrets.push(secret);
-        return secret;
+            lastShortSecretTime = Date.now();
+            const secret = vAPI.generateSecret();
+            shortSecrets.push(secret);
+            return secret;
+        },
+        long: previous => {
+            if ( previous !== undefined ) {
+                longSecrets.delete(previous);
+            }
+            const secret = vAPI.generateSecret(3);
+            longSecrets.add(secret);
+            return secret;
+        },
     };
-})();
+}
 
 /******************************************************************************/
 
@@ -1188,7 +1220,7 @@ vAPI.Net = class {
         {
             const wrrt = browser.webRequest.ResourceType;
             for ( const typeKey in wrrt ) {
-                if ( wrrt.hasOwnProperty(typeKey) ) {
+                if ( hasOwnProperty(wrrt, typeKey) ) {
                     this.validTypes.add(wrrt[typeKey]);
                 }
             }
@@ -1262,7 +1294,7 @@ vAPI.Net = class {
             let i = requests.length;
             while ( i-- ) {
                 const r = listener(requests[i]);
-                if ( r === undefined || r.cancel === false ) {
+                if ( r === undefined || r.cancel !== true ) {
                     requests.splice(i, 1);
                 }
             }
@@ -1314,11 +1346,20 @@ vAPI.Net = class {
         requests.push(Object.assign({}, details));
     }
     hasUnprocessedRequest(tabId) {
-        return this.unprocessedTabs.size !== 0 &&
-               this.unprocessedTabs.has(tabId);
+        if ( this.unprocessedTabs.size === 0 ) { return false; }
+        if ( tabId === undefined ) { return true; }
+        return this.unprocessedTabs.has(tabId);
     }
     removeUnprocessedRequest(tabId) {
-        this.unprocessedTabs.delete(tabId);
+        if ( this.deferredSuspendableListener === undefined ) {
+            this.unprocessedTabs.clear();
+            return true;
+        }
+        if ( tabId !== undefined ) {
+            this.unprocessedTabs.delete(tabId);
+        } else {
+            this.unprocessedTabs.clear();
+        }
         if ( this.unprocessedTabs.size !== 0 ) { return false; }
         this.suspendableListener = this.deferredSuspendableListener;
         this.deferredSuspendableListener = undefined;
@@ -1341,6 +1382,14 @@ vAPI.Net = class {
         if ( this.suspendDepth !== 0 ) { return; }
         this.unsuspendAllRequests(discard);
     }
+    headerValue(headers, name) {
+        for ( const header of headers ) {
+            if ( header.name.toLowerCase() === name ) {
+                return header.value.trim();
+            }
+        }
+        return '';
+    }
     static canSuspend() {
         return false;
     }
@@ -1352,7 +1401,7 @@ vAPI.Net = class {
 // To be defined by platform-specific code.
 
 vAPI.scriptletsInjector = (( ) => {
-    self.uBO_scriptletsInjected = true;
+    self.uBO_scriptletsInjected = '';
 }).toString();
 
 /******************************************************************************/
@@ -1424,22 +1473,22 @@ vAPI.adminStorage = (( ) => {
         let store;
         try {
             store = await webext.storage.managed.get();
-        } catch(ex) {
+        } catch {
         }
-        webext.storage.local.set({ cachedManagedStorage: store || {} });
+        vAPI.storage.set({ cachedManagedStorage: store || {} });
     };
 
     return {
         get: async function(key) {
             let bin;
             try {
-                bin = await webext.storage.local.get('cachedManagedStorage') || {};
+                bin = await vAPI.storage.get('cachedManagedStorage') || {};
                 if ( Object.keys(bin).length === 0 ) {
                     bin = await webext.storage.managed.get() || {};
                 } else {
                     bin = bin.cachedManagedStorage;
                 }
-            } catch(ex) {
+            } catch {
                 bin = {};
             }
             cacheManagedStorage();
@@ -1481,17 +1530,14 @@ vAPI.localStorage = {
     start: async function() {
         if ( this.cache instanceof Promise ) { return this.cache; }
         if ( this.cache instanceof Object ) { return this.cache; }
-        this.cache = webext.storage.local.get('localStorage').then(bin => {
-            this.cache = bin instanceof Object &&
-                bin.localStorage instanceof Object
-                    ? bin.localStorage
-                    : {};
+        this.cache = vAPI.storage.get('localStorage').then(bin => {
+            this.cache = bin && bin.localStorage || {};
         });
         return this.cache;
     },
     clear: function() {
         this.cache = {};
-        return webext.storage.local.set({ localStorage: this.cache });
+        return vAPI.storage.set({ localStorage: this.cache });
     },
     getItem: function(key) {
         if ( this.cache instanceof Object === false ) {
@@ -1513,7 +1559,7 @@ vAPI.localStorage = {
         await this.start();
         if ( value === this.cache[key] ) { return; }
         this.cache[key] = value;
-        return webext.storage.local.set({ localStorage: this.cache });
+        return vAPI.storage.set({ localStorage: this.cache });
     },
     cache: undefined,
 };
@@ -1588,7 +1634,7 @@ vAPI.cloud = (( ) => {
         try {
             bin = await webext.storage.sync.get(keys);
         } catch (reason) {
-            return reason;
+            return String(reason);
         }
         let chunkCount = 0;
         for ( let i = 0; i < maxChunkCountPerItem; i += 16 ) {
@@ -1612,10 +1658,7 @@ vAPI.cloud = (( ) => {
 
     const push = async function(details) {
         const { datakey, data, encode } = details;
-        if (
-            data === undefined ||
-            typeof data === 'string' && data === ''
-        ) {
+        if ( data === undefined || typeof data === 'string' && data === '' ) {
             return deleteChunks(datakey, 0);
         }
         const item = {
@@ -1623,10 +1666,9 @@ vAPI.cloud = (( ) => {
             tstamp: Date.now(),
             data,
         };
-        const json = JSON.stringify(item);
         const encoded = encode instanceof Function
-            ? await encode(json)
-            : json;
+            ? await encode(item)
+            : JSON.stringify(item);
 
         // Chunkify taking into account QUOTA_BYTES_PER_ITEM:
         //   https://developer.chrome.com/extensions/storage#property-sync
@@ -1646,7 +1688,7 @@ vAPI.cloud = (( ) => {
         // operation to fail.
         try {
             await deleteChunks(datakey, chunkCount + 1);
-        } catch (reason) {
+        } catch {
         }
 
         // Push the data to browser-provided cloud storage.
@@ -1691,13 +1733,16 @@ vAPI.cloud = (( ) => {
             i += 1;
         }
         encoded = encoded.join('');
-        const json = decode instanceof Function
-            ? await decode(encoded)
-            : encoded;
+
         let entry = null;
         try {
-            entry = JSON.parse(json);
-        } catch(ex) {
+            if ( decode instanceof Function ) {
+                entry = await decode(encoded) || null;
+            }
+            if ( typeof entry === 'string' ) {
+                entry = JSON.parse(entry);
+            }
+        } catch {
         }
         return entry;
     };
@@ -1718,7 +1763,7 @@ vAPI.cloud = (( ) => {
                 webext.storage.sync.getBytesInUse(keys),
                 webext.storage.sync.getBytesInUse(null),
             ]);
-        } catch(ex) {
+        } catch {
         }
         if ( Array.isArray(results) === false ) { return; }
         return { used: results[0], total: results[1], max: QUOTA_BYTES };
@@ -1742,5 +1787,28 @@ vAPI.cloud = (( ) => {
 
     return { push, pull, used, getOptions, setOptions };
 })();
+
+/******************************************************************************/
+/******************************************************************************/
+
+vAPI.alarms = {
+    create(...args) {
+        webext.alarms.create(...args);
+    },
+    createIfNotPresent(name, ...args) {
+        webext.alarms.get(name).then(details => {
+            if ( details !== undefined ) { return; }
+            webext.alarms.create(name, ...args);
+        });
+    },
+    async clear(...args) {
+        return webext.alarms.clear(...args);
+    },
+    onAlarm: {
+        addListener(...args) {
+            webext.alarms.onAlarm.addListener(...args);
+        },
+    },
+};
 
 /******************************************************************************/

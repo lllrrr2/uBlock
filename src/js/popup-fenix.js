@@ -1,6 +1,6 @@
 /*******************************************************************************
 
-    uBlock Origin - a browser extension to block requests.
+    uBlock Origin - a comprehensive, efficient content blocker
     Copyright (C) 2014-present Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
@@ -19,11 +19,9 @@
     Home: https://github.com/gorhill/uBlock
 */
 
-'use strict';
-
-import punycode from '../lib/punycode.js';
-import { i18n$ } from './i18n.js';
 import { dom, qs$, qsa$ } from './dom.js';
+import { i18n$ } from './i18n.js';
+import punycode from '../lib/punycode.js';
 
 /******************************************************************************/
 
@@ -70,6 +68,9 @@ let cachedPopupHash = '';
 const reCyrillicNonAmbiguous = /[\u0400-\u042b\u042d-\u042f\u0431\u0432\u0434\u0436-\u043d\u0442\u0444\u0446-\u0449\u044b-\u0454\u0457\u0459-\u0460\u0462-\u0474\u0476-\u04ba\u04bc\u04be-\u04ce\u04d0-\u0500\u0502-\u051a\u051c\u051e-\u052f]/;
 const reCyrillicAmbiguous = /[\u042c\u0430\u0433\u0435\u043e\u043f\u0440\u0441\u0443\u0445\u044a\u0455\u0456\u0458\u0461\u0475\u04bb\u04bd\u04cf\u0501\u051b\u051d]/;
 
+const hasOwnProperty = (o, p) =>
+    Object.prototype.hasOwnProperty.call(o, p);
+
 /******************************************************************************/
 
 const cachePopupData = function(data) {
@@ -88,7 +89,7 @@ const cachePopupData = function(data) {
         return popupData;
     }
     for ( const hostname in hostnameDict ) {
-        if ( hostnameDict.hasOwnProperty(hostname) === false ) { continue; }
+        if ( hasOwnProperty(hostnameDict, hostname) === false ) { continue; }
         let domain = hostnameDict[hostname].domain;
         let prefix = hostname.slice(0, 0 - domain.length - 1);
         // Prefix with space char for 1st-party hostnames: this ensure these
@@ -133,7 +134,9 @@ const hashFromPopupData = function(reset = false) {
     if ( reset ) {
         cachedPopupHash = hash;
     }
-    dom.cl.toggle(dom.body, 'needReload', hash !== cachedPopupHash);
+    dom.cl.toggle(dom.body, 'needReload',
+        hash !== cachedPopupHash || popupData.hasUnprocessedRequest === true
+    );
 };
 
 /******************************************************************************/
@@ -158,7 +161,7 @@ const formatNumber = function(count) {
         });
         if (
             intl.resolvedOptions instanceof Function &&
-            intl.resolvedOptions().hasOwnProperty('notation')
+            hasOwnProperty(intl.resolvedOptions(), 'notation')
         ) {
             intlNumberFormat = intl;
         }
@@ -173,11 +176,11 @@ const formatNumber = function(count) {
     //   a poor's man compact form, which unfortunately is not i18n-friendly.
     count /= 1000000;
     if ( count >= 100 ) {
-      count = Math.floor(count * 10) / 10;
+        count = Math.floor(count * 10) / 10;
     } else if ( count > 10 ) {
-      count = Math.floor(count * 100) / 100;
+        count = Math.floor(count * 100) / 100;
     } else {
-      count = Math.floor(count * 1000) / 1000;
+        count = Math.floor(count * 1000) / 1000;
     }
     return (count).toLocaleString(undefined) + '\u2009M';
 };
@@ -464,27 +467,27 @@ function filterFirewallRows() {
     for ( const elem of elems ) {
         const on = dom.cl.has(elem, 'on');
         switch ( elem.dataset.expr ) {
-            case 'not':
-                not = on;
-                break;
-            case 'blocked':
-                dom.cl.toggle(firewallElem, 'showBlocked', !not && on);
-                dom.cl.toggle(firewallElem, 'hideBlocked', not && on);
-                break;
-            case 'allowed':
-                dom.cl.toggle(firewallElem, 'showAllowed', !not && on);
-                dom.cl.toggle(firewallElem, 'hideAllowed', not && on);
-                break;
-            case 'script':
-                dom.cl.toggle(firewallElem, 'show3pScript', !not && on);
-                dom.cl.toggle(firewallElem, 'hide3pScript', not && on);
-                break;
-            case 'frame':
-                dom.cl.toggle(firewallElem, 'show3pFrame', !not && on);
-                dom.cl.toggle(firewallElem, 'hide3pFrame', not && on);
-                break;
-            default:
-                break;
+        case 'not':
+            not = on;
+            break;
+        case 'blocked':
+            dom.cl.toggle(firewallElem, 'showBlocked', !not && on);
+            dom.cl.toggle(firewallElem, 'hideBlocked', not && on);
+            break;
+        case 'allowed':
+            dom.cl.toggle(firewallElem, 'showAllowed', !not && on);
+            dom.cl.toggle(firewallElem, 'hideAllowed', not && on);
+            break;
+        case 'script':
+            dom.cl.toggle(firewallElem, 'show3pScript', !not && on);
+            dom.cl.toggle(firewallElem, 'hide3pScript', not && on);
+            break;
+        case 'frame':
+            dom.cl.toggle(firewallElem, 'show3pFrame', !not && on);
+            dom.cl.toggle(firewallElem, 'hide3pFrame', not && on);
+            break;
+        default:
+            break;
         }
     }
 }
@@ -493,14 +496,14 @@ dom.on('#firewall .filterExpressions', 'click', 'span[data-expr]', ev => {
     const target = ev.target;
     dom.cl.toggle(target, 'on');
     switch ( target.dataset.expr ) {
-        case 'blocked':
-            if ( dom.cl.has(target, 'on') === false ) { break; }
-            dom.cl.remove('#firewall .filterExpressions span[data-expr="allowed"]', 'on');
-            break;
-        case 'allowed':
-            if ( dom.cl.has(target, 'on') === false ) { break; }
-            dom.cl.remove('#firewall .filterExpressions span[data-expr="blocked"]', 'on');
-            break;
+    case 'blocked':
+        if ( dom.cl.has(target, 'on') === false ) { break; }
+        dom.cl.remove('#firewall .filterExpressions span[data-expr="allowed"]', 'on');
+        break;
+    case 'allowed':
+        if ( dom.cl.has(target, 'on') === false ) { break; }
+        dom.cl.remove('#firewall .filterExpressions span[data-expr="blocked"]', 'on');
+        break;
     }
     filterFirewallRows();
     const elems = qsa$('#firewall .filterExpressions span[data-expr]');
@@ -543,7 +546,7 @@ const renderPrivacyExposure = function() {
         if ( des === '*' || desHostnameDone.has(des) ) { continue; }
         const hnDetails = hostnameDict[des];
         const { domain, counts } = hnDetails;
-        if ( allDomains.hasOwnProperty(domain) === false ) {
+        if ( hasOwnProperty(allDomains, domain) === false ) {
             allDomains[domain] = false;
             allDomainCount += 1;
         }
@@ -612,11 +615,11 @@ const renderPopup = function() {
         }
     }
 
-    dom.cl.toggle(
-        '#basicTools',
-        'canPick',
-        popupData.canElementPicker === true && isFiltering
-    );
+    const canPick = popupData.canElementPicker && isFiltering;
+
+    dom.cl.toggle('#gotoZap', 'canPick', canPick);
+    dom.cl.toggle('#gotoPick', 'canPick', canPick && popupData.userFiltersAreEnabled);
+    dom.cl.toggle('#gotoReport', 'canPick', canPick);
 
     let blocked, total;
     if ( popupData.pageCounts !== undefined ) {
@@ -673,6 +676,9 @@ const renderPopup = function() {
         total ? Math.min(total, 99).toLocaleString() : ''
     );
 
+    // Unprocessed request(s) warning
+    dom.cl.toggle(dom.root, 'warn', popupData.hasUnprocessedRequest === true);
+
     dom.cl.toggle(dom.html, 'colorBlind', popupData.colorBlindFriendly === true);
 
     setGlobalExpand(popupData.firewallPaneMinimized === false, true);
@@ -684,6 +690,18 @@ const renderPopup = function() {
 
     renderTooltips();
 };
+
+/******************************************************************************/
+
+dom.on('.dismiss', 'click', ( ) => {
+    messaging.send('popupPanel', {
+        what: 'dismissUnprocessedRequest',
+        tabId: popupData.tabId,
+    }).then(( ) => {
+        popupData.hasUnprocessedRequest = false;
+        dom.cl.remove(dom.root, 'warn');
+    });
+});
 
 /******************************************************************************/
 
@@ -785,7 +803,7 @@ let renderOnce = function() {
         dom.attr('#firewall [title][data-src]', 'title', null);
     }
 
-    // This must be done the firewall is populated
+    // This must be done when the firewall is populated
     if ( popupData.popupPanelHeightMode === 1 ) {
         dom.cl.add(dom.body, 'vMin');
     }
@@ -927,7 +945,7 @@ const gotoReport = function() {
     messaging.send('popupPanel', {
         what: 'launchReporter',
         tabId: popupData.tabId,
-        pageURL: popupData.pageURL,
+        pageURL: popupData.rawURL,
         popupPanel,
     });
 
@@ -1135,10 +1153,22 @@ const setFirewallRuleHandler = function(ev) {
 /******************************************************************************/
 
 const reloadTab = function(bypassCache = false) {
+    // Preemptively clear the unprocessed-requests status since we know for sure
+    // the page is being reloaded in this code path.
+    if ( popupData.hasUnprocessedRequest === true )  {
+        messaging.send('popupPanel', {
+            what: 'dismissUnprocessedRequest',
+            tabId: popupData.tabId,
+        }).then(( ) => {
+            popupData.hasUnprocessedRequest = false;
+            dom.cl.remove(dom.root, 'warn');
+        });
+    }
+
     messaging.send('popupPanel', {
         what: 'reloadTab',
         tabId: popupData.tabId,
-        url: popupData.pageURL,
+        url: popupData.rawURL,
         select: vAPI.webextFlavor.soup.has('mobile'),
         bypassCache,
     });
@@ -1162,18 +1192,18 @@ dom.on(document, 'keydown', ev => {
     if ( ev.isComposing ) { return; }
     let bypassCache = false;
     switch ( ev.key ) {
-        case 'F5':
-            bypassCache = ev.ctrlKey || ev.metaKey || ev.shiftKey;
-            break;
-        case 'r':
-            if ( (ev.ctrlKey || ev.metaKey) !== true ) { return; }
-            break;
-        case 'R':
-            if ( (ev.ctrlKey || ev.metaKey) !== true ) { return; }
-            bypassCache = true;
-            break;
-        default:
-            return;
+    case 'F5':
+        bypassCache = ev.ctrlKey || ev.metaKey || ev.shiftKey;
+        break;
+    case 'r':
+        if ( (ev.ctrlKey || ev.metaKey) !== true ) { return; }
+        break;
+    case 'R':
+        if ( (ev.ctrlKey || ev.metaKey) !== true ) { return; }
+        bypassCache = true;
+        break;
+    default:
+        return;
     }
     reloadTab(bypassCache);
     ev.preventDefault();
@@ -1191,7 +1221,7 @@ vAPI.localStorage.getItemAsync('popupExpandExceptions').then(exceptions => {
             expandExceptions.add(exception);
         }
     }
-    catch(ex) {
+    catch {
     }
 });
 
@@ -1376,29 +1406,23 @@ const toggleHostnameSwitch = async function(ev) {
 // it and thus having to push it all the time unconditionally.
 
 const pollForContentChange = (( ) => {
-    let pollTimer;
-
     const pollCallback = async function() {
-        pollTimer = undefined;
         const response = await messaging.send('popupPanel', {
             what: 'hasPopupContentChanged',
             tabId: popupData.tabId,
             contentLastModified: popupData.contentLastModified,
         });
-        queryCallback(response);
-    };
-
-    const queryCallback = function(response) {
         if ( response ) {
-            getPopupData(popupData.tabId);
+            await getPopupData(popupData.tabId);
             return;
         }
         poll();
     };
 
+    const pollTimer = vAPI.defer.create(pollCallback);
+
     const poll = function() {
-        if ( pollTimer !== undefined ) { return; }
-        pollTimer = vAPI.setTimeout(pollCallback, 1500);
+        pollTimer.on(1500);
     };
 
     return poll;
@@ -1439,6 +1463,33 @@ const getPopupData = async function(tabId, first = false) {
         }
     };
 
+    const setOrientation = async ( ) => {
+        if ( dom.cl.has(dom.root, 'mobile') ) {
+            dom.cl.remove(dom.root, 'desktop');
+            dom.cl.add(dom.root, 'portrait');
+            return;
+        }
+        if ( selfURL.searchParams.get('portrait') !== null ) {
+            dom.cl.remove(dom.root, 'desktop');
+            dom.cl.add(dom.root, 'portrait');
+            return;
+        }
+        if ( popupData.popupPanelOrientation === 'landscape' ) { return; }
+        if ( popupData.popupPanelOrientation === 'portrait' ) {
+            dom.cl.remove(dom.root, 'desktop');
+            dom.cl.add(dom.root, 'portrait');
+            return;
+        }
+        if ( dom.cl.has(dom.root, 'desktop') === false ) { return; }
+        await nextFrames(8);
+        const main = qs$('#main');
+        const firewall = qs$('#firewall');
+        const minWidth = (main.offsetWidth + firewall.offsetWidth) / 1.1;
+        if ( window.innerWidth < minWidth ) {
+            dom.cl.add(dom.root, 'portrait');
+        }
+    };
+
     // The purpose of the following code is to reset to a vertical layout
     // should the viewport not be enough wide to accommodate the horizontal
     // layout.
@@ -1451,23 +1502,7 @@ const getPopupData = async function(tabId, first = false) {
     // Use a tolerance proportional to the sum of the width of the panes
     // when testing against viewport width.
     const checkViewport = async function() {
-        if (
-            dom.cl.has(dom.root, 'mobile') ||
-            selfURL.searchParams.get('portrait')
-        ) {
-            dom.cl.add(dom.root, 'portrait');
-        } else if ( dom.cl.has(dom.root, 'desktop') ) {
-            await nextFrames(8);
-            const main = qs$('#main');
-            const firewall = qs$('#firewall');
-            const minWidth = (main.offsetWidth + firewall.offsetWidth) / 1.1;
-            if (
-                selfURL.searchParams.get('portrait') ||
-                window.innerWidth < minWidth
-            ) {
-                dom.cl.add(dom.root, 'portrait');
-            }
-        }
+        await setOrientation();
         if ( dom.cl.has(dom.root, 'portrait') ) {
             const panes = qs$('#panes');
             const sticky = qs$('#sticky');

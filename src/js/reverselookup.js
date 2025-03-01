@@ -1,6 +1,6 @@
 /*******************************************************************************
 
-    uBlock Origin - a browser extension to block requests.
+    uBlock Origin - a comprehensive, efficient content blocker
     Copyright (C) 2015-present Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
@@ -19,28 +19,21 @@
     Home: https://github.com/gorhill/uBlock
 */
 
-'use strict';
-
-/******************************************************************************/
-
-import staticNetFilteringEngine from './static-net-filtering.js';
-import µb from './background.js';
-import { CompiledListWriter } from './static-filtering-io.js';
-import { i18n$ } from './i18n.js';
 import * as sfp from './static-filtering-parser.js';
-
 import {
     domainFromHostname,
     hostnameFromURI,
 } from './uri-utils.js';
+import { CompiledListWriter } from './static-filtering-io.js';
+import { i18n$ } from './i18n.js';
+import staticNetFilteringEngine from './static-net-filtering.js';
+import µb from './background.js';
 
 /******************************************************************************/
 
-const workerTTL = 5 * 60 * 1000;
 const pendingResponses = new Map();
 
 let worker = null;
-let workerTTLTimer;
 let needLists = true;
 let messageId = 1;
 
@@ -52,10 +45,7 @@ const onWorkerMessage = function(e) {
 };
 
 const stopWorker = function() {
-    if ( workerTTLTimer !== undefined ) {
-        clearTimeout(workerTTLTimer);
-        workerTTLTimer = undefined;
-    }
+    workerTTLTimer.off();
     if ( worker === null ) { return; }
     worker.terminate();
     worker = null;
@@ -66,6 +56,9 @@ const stopWorker = function() {
     pendingResponses.clear();
 };
 
+const workerTTLTimer = vAPI.defer.create(stopWorker);
+const workerTTL = { min: 1.5 };
+
 const initWorker = function() {
     if ( worker === null ) {
         worker = new Worker('js/reverselookup-worker.js');
@@ -73,10 +66,7 @@ const initWorker = function() {
     }
 
     // The worker will be shutdown after n minutes without being used.
-    if ( workerTTLTimer !== undefined ) {
-        clearTimeout(workerTTLTimer);
-    }
-    workerTTLTimer = vAPI.setTimeout(stopWorker, workerTTL);
+    workerTTLTimer.offon(workerTTL);
 
     if ( needLists === false ) {
         return Promise.resolve();
@@ -103,7 +93,7 @@ const initWorker = function() {
     };
 
     for ( const listKey in µb.availableFilterLists ) {
-        if ( µb.availableFilterLists.hasOwnProperty(listKey) === false ) {
+        if ( Object.prototype.hasOwnProperty.call(µb.availableFilterLists, listKey) === false ) {
             continue;
         }
         const entry = µb.availableFilterLists[listKey];
@@ -135,9 +125,9 @@ const fromNetFilter = async function(rawFilter) {
 
     const writer = new CompiledListWriter();
     const parser = new sfp.AstFilterParser({
-        expertMode: true,
-        nativeCssHas: vAPI.webextFlavor.env.includes('native_css_has'),
+        trustedSource: true,
         maxTokenLength: staticNetFilteringEngine.MAX_TOKEN_LENGTH,
+        nativeCssHas: vAPI.webextFlavor.env.includes('native_css_has'),
     });
     parser.parse(rawFilter);
 
@@ -172,6 +162,18 @@ const fromExtendedFilter = async function(details) {
     const id = messageId++;
     const hostname = hostnameFromURI(details.url);
 
+    const parser = new sfp.AstFilterParser({
+        trustedSource: true,
+        nativeCssHas: vAPI.webextFlavor.env.includes('native_css_has'),
+    });
+    parser.parse(details.rawFilter);
+    let needle;
+    if ( parser.isScriptletFilter() ) {
+        needle = JSON.stringify(parser.getScriptletArgs());
+    } else if ( parser.isResponseheaderFilter() ) {
+        needle = parser.getResponseheaderName();
+    }
+
     worker.postMessage({
         what: 'fromExtendedFilter',
         id,
@@ -187,7 +189,8 @@ const fromExtendedFilter = async function(details) {
                 'specifichide',
                 details.url
             ) === 2,
-        rawFilter: details.rawFilter
+        rawFilter: details.rawFilter,
+        needle,
     });
 
     return new Promise(resolve => {
