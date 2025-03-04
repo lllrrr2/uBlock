@@ -16,6 +16,7 @@
 <div id="panes">
     <div id="main">
         <div id="sticky">
+            <div id="hostname"><span></span>&shy;<span>&nbsp;</span></div>
             <div id="stickyTools">
                 <div class="rulesetTools">
                     <span id="saveRules" class="fa-icon" data-i18n-title="popupTipSaveRules">lock</span>
@@ -40,7 +41,6 @@
                     <span id="refresh" class="fa-icon">refresh</span>
                 </div>
             </div>
-            <div id="hostname"><span></span>&shy;<span></span></div>
         </div>
         <div id="extraTools" class="toolRibbon" data-more="d">
             <span id="no-popups" class="hnSwitch tool enabled" role="button" aria-label tabindex="0" title><span class="fa-icon fa-icon-badged">ph-popups<svg class="nope" viewBox="0 0 20 20"><path d="M1,1 19,19M1,19 19,1" /></svg></span><span class="caption" data-i18n="popupNoPopups_v2"></span></span>
@@ -51,9 +51,9 @@
         </div>
         <hr data-more="a">
         <div id="basicStats" data-more="a">
-            <span data-i18n="popupBlockedOnThisPage_v2"></span><span></span>
-            <span data-i18n="popupDomainsConnected_v2"></span><span></span>
-            <span data-i18n="popupBlockedSinceInstall_v2" data-more="b"></span><span data-more="b"></span>
+            <span data-i18n="popupBlockedOnThisPage_v2">_</span><span>_</span>
+            <span data-i18n="popupDomainsConnected_v2">_</span><span>_</span>
+            <span data-i18n="popupBlockedSinceInstall_v2" data-more="b">_</span><span data-more="b">_</span>
         </div>
         <div id="basicTools" class="toolRibbon" data-more="c">
             <span id="gotoZap" class="fa-icon tool enabled needPick" data-i18n-title="popupTipZapper">bolt<span class="caption" data-i18n="popupTipZapper"></span></span>
@@ -61,6 +61,9 @@
             <span id="gotoReport" class="fa-icon tool enabled needPick" data-i18n-title="popupTipReport">comment-alt<span class="caption" data-i18n="popupTipReport"></span></span>
             <a href="logger-ui.html#_" class="fa-icon tool enabled" target="uBOLogger" tabindex="0" data-i18n-title="popupTipLog">list-alt<span class="caption" data-i18n="popupTipLog"></span></a>
             <a href="dashboard.html" class="fa-icon tool enabled" target="uBODashboard" tabindex="0" data-i18n-title="popupTipDashboard">cogs<span class="caption" data-i18n="popupTipDashboard"></span></a>
+        </div>
+        <div id="unprocessedRequestWarning">
+            <span data-i18n="unprocessedRequestTooltip"></span><span class="dismiss"><svg viewBox="0 0 20 20"><path d="M0,0 20,20M0,20 20,0" /></svg></span>
         </div>
         <hr data-more="f">
         <div class="itemRibbon" data-more="f">
@@ -98,7 +101,7 @@
 
 <script src="lib/hsluv/hsluv-0.1.0.min.js"></script>
 
-<script src="js/fa-icons.js"></script>
+<script src="js/fa-icons.js" type="module"></script>
 <script src="js/vapi.js"></script>
 <script src="js/vapi-common.js"></script>
 <script src="js/vapi-client.js"></script>

@@ -1,6 +1,6 @@
 /*******************************************************************************
 
-    uBlock Origin - a browser extension to block requests.
+    uBlock Origin - a comprehensive, efficient content blocker
     Copyright (C) 2015-present Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
@@ -18,8 +18,6 @@
 
     Home: https://github.com/gorhill/uBlock
 */
-
-'use strict';
 
 /******************************************************************************/
 
@@ -122,7 +120,7 @@ const fromExtendedFilter = function(details) {
     // The longer the needle, the lower the number of false positives.
     // https://github.com/uBlockOrigin/uBlock-issues/issues/1139
     //   Mind that there is no guarantee a selector has `\w` characters.
-    const needle = selector.match(/\w+|\*/g).reduce(function(a, b) {
+    const needle = (details.needle || selector).match(/\w+|\*/g).reduce(function(a, b) {
         return a.length > b.length ? a : b;
     });
 
@@ -212,8 +210,15 @@ const fromExtendedFilter = function(details) {
             case 8:
             // HTML filtering
             // Response header filtering
+            /* fallthrough */
             case 64: {
                 if ( exception !== ((fargs[2] & 0b001) !== 0) ) { break; }
+                if ( /^responseheader\(.+\)$/.test(selector) ) {
+                    if ( fargs[3] !== needle ) { break; }
+                    if ( hostnameMatches(fargs[1]) === false ) { break; }
+                    found = fargs[1] + prefix + selector;
+                    break;
+                }
                 const isProcedural = (fargs[2] & 0b010) !== 0;
                 if (
                     isProcedural === false && fargs[3] !== selector ||
@@ -237,10 +242,12 @@ const fromExtendedFilter = function(details) {
             // Scriptlet injection
             case 32:
                 if ( exception !== ((fargs[2] & 0b001) !== 0) ) { break; }
-                if ( fargs[3] !== selector ) { break; }
+                if ( fargs[3] !== details.needle ) { break; }
                 if ( hostnameMatches(fargs[1]) ) {
                     found = fargs[1] + prefix + selector;
                 }
+                break;
+            default:
                 break;
             }
             if ( found !== undefined  ) {

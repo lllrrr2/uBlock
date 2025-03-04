@@ -1,6 +1,6 @@
 /*******************************************************************************
 
-    uBlock Origin - a browser extension to block requests.
+    uBlock Origin Lite - a comprehensive, MV3-compliant content blocker
     Copyright (C) 2014-present Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
@@ -19,47 +19,108 @@
     Home: https://github.com/gorhill/uBlock
 */
 
-/* jshint esversion:11 */
-
-'use strict';
-
-/******************************************************************************/
-
 // Important!
 // Isolate from global scope
 (function uBOL_cssProcedural() {
 
 /******************************************************************************/
 
-let proceduralFilterer;
+const proceduralImports = self.proceduralImports || [];
+self.proceduralImports = undefined;
+delete self.proceduralImports;
 
 /******************************************************************************/
 
-const addStylesheet = text => {
-    try {
-        const sheet = new CSSStyleSheet();
-        sheet.replace(`@layer{${text}}`);
-        document.adoptedStyleSheets = [
-            ...document.adoptedStyleSheets,
-            sheet
-        ];
-    } catch(ex) {
+const hnParts = [];
+try { hnParts.push(...document.location.hostname.split('.')); }
+catch { }
+const hnpartslen = hnParts.length;
+if ( hnpartslen === 0 ) { return; }
+
+const selectors = [];
+
+for ( const { argsList, exceptionsMap, hostnamesMap, entitiesMap } of proceduralImports ) {
+    const todoIndices = new Set();
+    const tonotdoIndices = [];
+    // Exceptions
+    if ( exceptionsMap.size !== 0 ) {
+        for ( let i = 0; i < hnpartslen; i++ ) {
+            const hn = hnParts.slice(i).join('.');
+            const excepted = exceptionsMap.get(hn);
+            if ( excepted ) { tonotdoIndices.push(...excepted); }
+        }
+        exceptionsMap.clear();
     }
+    // Hostname-based
+    if ( hostnamesMap.size !== 0 ) {
+        const collectArgIndices = hn => {
+            let argsIndices = hostnamesMap.get(hn);
+            if ( argsIndices === undefined ) { return; }
+            if ( typeof argsIndices === 'number' ) { argsIndices = [ argsIndices ]; }
+            for ( const argsIndex of argsIndices ) {
+                if ( tonotdoIndices.includes(argsIndex) ) { continue; }
+                todoIndices.add(argsIndex);
+            }
+        };
+        for ( let i = 0; i < hnpartslen; i++ ) {
+            const hn = hnParts.slice(i).join('.');
+            collectArgIndices(hn);
+        }
+        collectArgIndices('*');
+        hostnamesMap.clear();
+    }
+    // Entity-based
+    if ( entitiesMap.size !== 0 ) {
+        const n = hnpartslen - 1;
+        for ( let i = 0; i < n; i++ ) {
+            for ( let j = n; j > i; j-- ) {
+                const en = hnParts.slice(i,j).join('.');
+                let argsIndices = entitiesMap.get(en);
+                if ( argsIndices === undefined ) { continue; }
+                if ( typeof argsIndices === 'number' ) { argsIndices = [ argsIndices ]; }
+                for ( const argsIndex of argsIndices ) {
+                    if ( tonotdoIndices.includes(argsIndex) ) { continue; }
+                    todoIndices.add(argsIndex);
+                }
+            }
+        }
+        entitiesMap.clear();
+    }
+    for ( const i of todoIndices ) {
+        selectors.push(...argsList[i].map(json => JSON.parse(json)));
+    }
+    argsList.length = 0;
+}
+proceduralImports.length = 0;
+
+if ( selectors.length === 0 ) { return; }
+
+/******************************************************************************/
+
+const uBOL_injectCSS = (css, count = 10) => {
+    chrome.runtime.sendMessage({ what: 'insertCSS', css }).catch(( ) => {
+        count -= 1;
+        if ( count === 0 ) { return; }
+        uBOL_injectCSS(css, count - 1);
+    });
 };
 
 const nonVisualElements = {
+    head: true,
+    link: true,
+    meta: true,
     script: true,
     style: true,
 };
 
 const regexFromString = (s, exact = false) => {
     if ( s === '' ) { return /^/; }
-    const match = /^\/(.+)\/([i]?)$/.exec(s);
+    const match = /^\/(.+)\/([imu]*)$/.exec(s);
     if ( match !== null ) {
         return new RegExp(match[1], match[2] || undefined);
     }
     const reStr = s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(exact ? `^${reStr}$` : reStr, 'i');
+    return new RegExp(exact ? `^${reStr}$` : reStr);
 };
 
 /******************************************************************************/
@@ -178,7 +239,7 @@ class PSelectorMatchesMediaTask extends PSelectorTask {
         if ( this.mql.media === 'not all' ) { return; }
         this.mql.addEventListener('change', ( ) => {
             if ( proceduralFilterer instanceof Object === false ) { return; }
-            proceduralFilterer.onDOMChanged([ null ]);
+            proceduralFilterer.onDOMChanged();
         });
     }
     transpose(node, output) {
@@ -200,6 +261,32 @@ class PSelectorMatchesPathTask extends PSelectorTask {
         if ( this.needle.test(self.location.pathname + self.location.search) ) {
             output.push(node);
         }
+    }
+}
+
+/******************************************************************************/
+
+class PSelectorMatchesPropTask extends PSelectorTask {
+    constructor(task) {
+        super();
+        this.props = task[1].attr.split('.');
+        this.reValue = task[1].value !== ''
+            ? regexFromString(task[1].value, true)
+            : null;
+    }
+    transpose(node, output) {
+        let value = node;
+        for ( const prop of this.props ) {
+            if ( value === undefined ) { return; }
+            if ( value === null ) { return; }
+            value = value[prop];
+        }
+        if ( this.reValue === null ) {
+            if ( value === undefined ) { return; }
+        } else if ( this.reValue.test(value) === false ) {
+            return;
+        }
+        output.push(node);
     }
 }
 
@@ -231,28 +318,27 @@ class PSelectorOthersTask extends PSelectorTask {
         const toKeep = new Set(this.targets);
         const toDiscard = new Set();
         const body = document.body;
+        const head = document.head;
         let discard = null;
         for ( let keep of this.targets ) {
-            while ( keep !== null && keep !== body ) {
+            while ( keep !== null && keep !== body && keep !== head ) {
                 toKeep.add(keep);
                 toDiscard.delete(keep);
                 discard = keep.previousElementSibling;
                 while ( discard !== null ) {
-                    if (
-                        nonVisualElements[discard.localName] !== true &&
-                        toKeep.has(discard) === false
-                    ) {
-                        toDiscard.add(discard);
+                    if ( nonVisualElements[discard.localName] !== true ) {
+                        if ( toKeep.has(discard) === false ) {
+                            toDiscard.add(discard);
+                        }
                     }
                     discard = discard.previousElementSibling;
                 }
                 discard = keep.nextElementSibling;
                 while ( discard !== null ) {
-                    if (
-                        nonVisualElements[discard.localName] !== true &&
-                        toKeep.has(discard) === false
-                    ) {
-                        toDiscard.add(discard);
+                    if ( nonVisualElements[discard.localName] !== true ) {
+                        if ( toKeep.has(discard) === false ) {
+                            toDiscard.add(discard);
+                        }
                     }
                     discard = discard.nextElementSibling;
                 }
@@ -272,6 +358,38 @@ class PSelectorOthersTask extends PSelectorTask {
             }
         }
         this.targets.add(candidate);
+    }
+}
+
+/******************************************************************************/
+
+class PSelectorShadowTask extends PSelectorTask {
+    constructor(task) {
+        super();
+        this.selector = task[1];
+    }
+    transpose(node, output) {
+        const root = this.openOrClosedShadowRoot(node);
+        if ( root === null ) { return; }
+        const nodes = root.querySelectorAll(this.selector);
+        output.push(...nodes);
+    }
+    get openOrClosedShadowRoot() {
+        if ( PSelectorShadowTask.openOrClosedShadowRoot !== undefined ) {
+            return PSelectorShadowTask.openOrClosedShadowRoot;
+        }
+        if ( typeof chrome === 'object' && chrome !== null ) {
+            if ( chrome.dom instanceof Object ) {
+                if ( typeof chrome.dom.openOrClosedShadowRoot === 'function' ) {
+                    PSelectorShadowTask.openOrClosedShadowRoot =
+                        chrome.dom.openOrClosedShadowRoot;
+                    return PSelectorShadowTask.openOrClosedShadowRoot;
+                }
+            }
+        }
+        PSelectorShadowTask.openOrClosedShadowRoot = node =>
+            node.openOrClosedShadowRoot || null;
+        return PSelectorShadowTask.openOrClosedShadowRoot;
     }
 }
 
@@ -365,7 +483,7 @@ class PSelectorWatchAttrs extends PSelectorTask {
     // TODO: Is it worth trying to re-apply only the current selector?
     handler() {
         if ( proceduralFilterer instanceof Object ) {
-            proceduralFilterer.onDOMChanged([ null ]);
+            proceduralFilterer.onDOMChanged();
         }
     }
     transpose(node, output) {
@@ -407,7 +525,6 @@ class PSelectorXpathTask extends PSelectorTask {
 
 class PSelector {
     constructor(o) {
-        this.raw = o.raw;
         this.selector = o.selector;
         this.tasks = [];
         const tasks = [];
@@ -421,8 +538,13 @@ class PSelector {
     prime(input) {
         const root = input || document;
         if ( this.selector === '' ) { return [ root ]; }
-        if ( input !== document && /^ [>+~]/.test(this.selector) ) {
-            return Array.from(PSelectorSpathTask.qsa(input, this.selector));
+        if ( input !== document ) {
+            const c0 = this.selector.charCodeAt(0);
+            if ( c0 === 0x2B /* + */ || c0 === 0x7E /* ~ */ ) {
+                return Array.from(PSelectorSpathTask.qsa(input, this.selector));
+            } else if ( c0 === 0x3E /* > */ ) {
+                return Array.from(input.querySelectorAll(`:scope ${this.selector}`));
+            }
         }
         return Array.from(root.querySelectorAll(this.selector));
     }
@@ -470,9 +592,11 @@ PSelector.prototype.operatorToTaskMap = new Map([
     [ 'matches-css-before', PSelectorMatchesCSSBeforeTask ],
     [ 'matches-media', PSelectorMatchesMediaTask ],
     [ 'matches-path', PSelectorMatchesPathTask ],
+    [ 'matches-prop', PSelectorMatchesPropTask ],
     [ 'min-text-length', PSelectorMinTextLengthTask ],
     [ 'not', PSelectorIfNotTask ],
     [ 'others', PSelectorOthersTask ],
+    [ 'shadow', PSelectorShadowTask ],
     [ 'spath', PSelectorSpathTask ],
     [ 'upward', PSelectorUpwardTask ],
     [ 'watch-attr', PSelectorWatchAttrs ],
@@ -493,7 +617,14 @@ class PSelectorRoot extends PSelector {
     prime(input) {
         try {
             return super.prime(input);
-        } catch (ex) {
+        } catch {
+        }
+        return [];
+    }
+    exec(input) {
+        try {
+            return super.exec(input);
+        } catch {
         }
         return [];
     }
@@ -573,9 +704,7 @@ class ProceduralFilterer {
         if ( styleToken !== undefined ) { return styleToken; }
         styleToken = this.randomToken();
         this.styleTokenMap.set(style, styleToken);
-        addStylesheet(
-            `[${this.masterToken}][${styleToken}]\n{${style}}\n`,
-        );
+        uBOL_injectCSS(`[${this.masterToken}][${styleToken}]\n{${style}}\n`);
         return styleToken;
     }
 
@@ -658,42 +787,7 @@ class ProceduralFilterer {
 
 /******************************************************************************/
 
-const proceduralImports = self.proceduralImports || [];
-
-const lookupSelectors = (hn, out) => {
-    for ( const { argsList, hostnamesMap } of proceduralImports ) {
-        let argsIndices = hostnamesMap.get(hn);
-        if ( argsIndices === undefined ) { continue; }
-        if ( typeof argsIndices === 'number' ) { argsIndices = [ argsIndices ]; }
-        for ( const argsIndex of argsIndices ) {
-            const details = argsList[argsIndex];
-            if ( details.n && details.n.includes(hn) ) { continue; }
-            out.push(...details.a.map(json => JSON.parse(json)));
-        }
-    }
-};
-
-let hn;
-try { hn = document.location.hostname; } catch(ex) { }
-const selectors = [];
-while ( hn ) {
-    lookupSelectors(hn, selectors);
-    if ( hn === '*' ) { break; }
-    const pos = hn.indexOf('.');
-    if ( pos !== -1 ) {
-        hn = hn.slice(pos + 1);
-    } else {
-        hn = '*';
-    }
-}
-
-proceduralImports.length = 0;
-
-/******************************************************************************/
-
-if ( selectors.length === 0 ) { return; }
-
-proceduralFilterer = new ProceduralFilterer(selectors);
+const proceduralFilterer = new ProceduralFilterer(selectors);
 
 const observer = new MutationObserver(mutations => {
     let domChanged = false;
@@ -726,3 +820,5 @@ observer.observe(document, {
 })();
 
 /******************************************************************************/
+
+void 0;

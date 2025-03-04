@@ -1,6 +1,6 @@
 /*******************************************************************************
 
-    uBlock Origin - a browser extension to block requests.
+    uBlock Origin Lite - a comprehensive, MV3-compliant content blocker
     Copyright (C) 2022-present Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
@@ -19,27 +19,35 @@
     Home: https://github.com/gorhill/uBlock
 */
 
-/* jshint esversion:11 */
+import {
+    browser,
+    localRead, localWrite,
+    runtime,
+    sendMessage,
+} from './ext.js';
 
-'use strict';
-
-/******************************************************************************/
-
-import { browser, runtime, sendMessage } from './ext.js';
 import { dom, qs$ } from './dom.js';
-import { i18n$ } from './i18n.js';
-import { simpleStorage } from './storage.js';
+import { i18n,  i18n$ } from './i18n.js';
+import punycode from './punycode.js';
 
 /******************************************************************************/
 
 const popupPanelData = {};
 const  currentTab = {};
-let tabHostname = '';
+const tabURL = new URL(runtime.getURL('/'));
 
 /******************************************************************************/
 
 function normalizedHostname(hn) {
     return hn.replace(/^www\./, '');
+}
+
+/******************************************************************************/
+
+function renderAdminRules() {
+    const { disabledFeatures: forbid = [] } = popupPanelData;
+    if ( forbid.length === 0 ) { return; }
+    dom.body.dataset.forbid = forbid.join(' ');
 }
 
 /******************************************************************************/
@@ -60,18 +68,28 @@ function setFilteringMode(level, commit = false) {
 }
 
 async function commitFilteringMode() {
-    if ( tabHostname === '' ) { return; }
-    const targetHostname = normalizedHostname(tabHostname);
+    if ( tabURL.hostname === '' ) { return; }
+    const targetHostname = normalizedHostname(tabURL.hostname);
     const modeSlider = qs$('.filteringModeSlider');
     const afterLevel = parseInt(modeSlider.dataset.level, 10);
     const beforeLevel = parseInt(modeSlider.dataset.levelBefore, 10);
     if ( afterLevel > 1 ) {
+        if ( beforeLevel <= 1 ) {
+            sendMessage({
+                what: 'setPendingFilteringMode',
+                tabId: currentTab.id,
+                url: tabURL.href,
+                hostname: targetHostname,
+                beforeLevel,
+                afterLevel,
+            });
+        }
         let granted = false;
         try {
             granted = await browser.permissions.request({
                 origins: [ `*://*.${targetHostname}/*` ],
             });
-        } catch(ex) {
+        } catch {
         }
         if ( granted !== true ) {
             setFilteringMode(beforeLevel);
@@ -91,7 +109,11 @@ async function commitFilteringMode() {
         setFilteringMode(actualLevel);
     }
     if ( actualLevel !== beforeLevel && popupPanelData.autoReload ) {
-        browser.tabs.reload(currentTab.id);
+        self.setTimeout(( ) => {
+            browser.tabs.update(currentTab.id, {
+                url: tabURL.href,
+            });
+        }, 437);
     }
 }
 
@@ -242,11 +264,11 @@ async function toggleSections(more) {
     }
     if ( newBits === currentBits ) { return; }
     sectionBitsToAttribute(newBits);
-    simpleStorage.setItem('popupPanelSections', newBits);
+    localWrite('popupPanelSections', newBits);
 }
 
-simpleStorage.getItem('popupPanelSections').then(s => {
-    sectionBitsToAttribute(parseInt(s, 10) || 0);
+localRead('popupPanelSections').then(bits => {
+    sectionBitsToAttribute(bits || 0);
 });
 
 dom.on('#moreButton', 'click', ( ) => {
@@ -255,6 +277,36 @@ dom.on('#moreButton', 'click', ( ) => {
 
 dom.on('#lessButton', 'click', ( ) => {
     toggleSections(false);
+});
+
+/******************************************************************************/
+
+dom.on('#showMatchedRules', 'click', ev => {
+    if ( ev.isTrusted !== true ) { return; }
+    if ( ev.button !== 0 ) { return; }
+    sendMessage({
+        what: 'showMatchedRules',
+        tabId: currentTab.id,
+    });
+});
+
+/******************************************************************************/
+
+dom.on('[data-i18n-title="popupTipReport"]', 'click', ev => {
+    if ( ev.isTrusted !== true ) { return; }
+    let url;
+    try {
+        url = new URL(currentTab.url);
+    } catch {
+    }
+    if ( url === undefined ) { return; }
+    const reportURL = new URL(runtime.getURL('/report.html'));
+    reportURL.searchParams.set('url', url.href);
+    reportURL.searchParams.set('mode', popupPanelData.level);
+    sendMessage({
+        what: 'gotoURL',
+        url: `${reportURL.pathname}${reportURL.search}`,
+    });
 });
 
 /******************************************************************************/
@@ -277,39 +329,61 @@ async function init() {
 
     let url;
     try {
+        const strictBlockURL = runtime.getURL('/strictblock.');
         url = new URL(currentTab.url);
-        tabHostname = url.hostname || '';
-    } catch(ex) {
+        if ( url.href.startsWith(strictBlockURL) ) {
+            url = new URL(url.hash.slice(1));
+        }
+        tabURL.href = url.href || '';
+    } catch {
     }
 
     if ( url !== undefined ) {
         const response = await sendMessage({
             what: 'popupPanelData',
             origin: url.origin,
-            hostname: normalizedHostname(tabHostname),
+            hostname: normalizedHostname(tabURL.hostname),
         });
         if ( response instanceof Object ) {
             Object.assign(popupPanelData, response);
         }
     }
 
+    renderAdminRules();
+
     setFilteringMode(popupPanelData.level);
 
-    dom.text('#hostname', tabHostname);
+    dom.text('#hostname', punycode.toUnicode(tabURL.hostname));
+
+    dom.cl.toggle('#showMatchedRules', 'enabled',
+        popupPanelData.isSideloaded === true &&
+        popupPanelData.developerMode &&
+        typeof currentTab.id === 'number' &&
+        isNaN(currentTab.id) === false
+    );
+
+    dom.cl.toggle('#reportFilterIssue', 'enabled',
+        /^https?:\/\//.test(url?.href)
+    );
 
     const parent = qs$('#rulesetStats');
     for ( const details of popupPanelData.rulesetDetails || [] ) {
         const div = dom.clone('#templates .rulesetDetails');
-        dom.text(qs$(div, 'h1'), details.name);
+        qs$(div, 'h1').append(i18n.patchUnicodeFlags(details.name));
         const { rules, filters, css } = details;
         let ruleCount = rules.plain + rules.regex;
         if ( popupPanelData.hasOmnipotence ) {
-            ruleCount += rules.removeparam + rules.redirect + rules.csp;
+            ruleCount += rules.removeparam + rules.redirect + rules.modifyHeaders;
         }
         let specificCount = 0;
-        if ( css.specific instanceof Object ) {
-            specificCount += css.specific.domainBased;
-            specificCount += css.specific.entityBased;
+        if ( typeof css.specific === 'number' ) {
+            specificCount += css.specific;
+        }
+        if ( typeof css.declarative === 'number' ) {
+            specificCount += css.declarative;
+        }
+        if ( typeof css.procedural === 'number' ) {
+            specificCount += css.procedural;
         }
         dom.text(
             qs$(div, 'p'),
@@ -329,7 +403,7 @@ async function init() {
 async function tryInit() {
     try {
         await init();
-    } catch(ex) {
+    } catch {
         setTimeout(tryInit, 100);
     }
 }

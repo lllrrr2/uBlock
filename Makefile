@@ -1,11 +1,12 @@
 # https://stackoverflow.com/a/6273809
 run_options := $(filter-out $@,$(MAKECMDGOALS))
 
-.PHONY: all clean test lint chromium opera firefox npm dig mv3 mv3-quick \
+.PHONY: all clean cleanassets test lint chromium opera firefox npm dig \
+	mv3 mv3-quick mv3-chromium mv3-firefox \
 	compare maxcost medcost mincost modifiers record wasm
 
 sources := $(wildcard assets/* assets/*/* dist/version src/* src/*/* src/*/*/* src/*/*/*/*)
-platform := $(wildcard platform/* platform/*/* platform/*/*/* platform/*/*/*/*)
+platform := $(wildcard platform/* platform/*/* platform/*/*/* platform/*/*/*/* platform/*/*/*/*/*)
 assets := dist/build/uAssets
 
 all: chromium firefox npm
@@ -31,11 +32,16 @@ firefox: dist/build/uBlock0.firefox
 dist/build/uBlock0.npm: tools/make-nodejs.sh $(sources) $(platform) $(assets)
 	tools/make-npm.sh
 
-# Build the Node.js package.
 npm: dist/build/uBlock0.npm
 
-lint: npm
-	cd dist/build/uBlock0.npm && npm run lint
+# Dev tools
+node_modules:
+	npm install
+
+init: node_modules
+
+lint: init
+	npm run lint
 
 test: npm
 	cd dist/build/uBlock0.npm && npm run test
@@ -55,8 +61,15 @@ dig: dist/build/uBlock0.dig
 dig-snfe: dig
 	cd dist/build/uBlock0.dig && npm run snfe $(run_options)
 
-mv3: tools/make-mv3.sh $(sources) $(platform)
-	tools/make-mv3.sh
+dist/build/uBOLite.chromium: tools/make-mv3.sh $(sources) $(platform)
+	tools/make-mv3.sh chromium
+
+mv3-chromium: dist/build/uBOLite.chromium
+
+dist/build/uBOLite.firefox: tools/make-mv3.sh $(sources) $(platform)
+	tools/make-mv3.sh firefox
+
+mv3-firefox: dist/build/uBOLite.firefox
 
 mv3-quick: tools/make-mv3.sh $(sources) $(platform)
 	tools/make-mv3.sh quick
@@ -68,8 +81,10 @@ dist/build/uAssets:
 	tools/pull-assets.sh
 
 clean:
-	rm -rf dist/build tmp/node_modules
+	rm -rf dist/build tmp/node_modules node_modules
 
+cleanassets:
+	rm -rf dist/build/mv3-data dist/build/uAssets
 
 # Not real targets, just convenient for auto-completion at shell prompt
 compare:

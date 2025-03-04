@@ -1,6 +1,6 @@
 /*******************************************************************************
 
-    uBlock Origin - a browser extension to block requests.
+    uBlock Origin - a comprehensive, efficient content blocker
     Copyright (C) 2017-present Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
@@ -19,14 +19,12 @@
     Home: https://github.com/gorhill/uBlock
 */
 
-'use strict';
-
 /******************************************************************************/
 
 const StaticExtFilteringHostnameDB = class {
-    constructor(nBits, selfie = undefined) {
+    constructor(nBits, version = 0) {
+        this.version = version;
         this.nBits = nBits;
-        this.timer = undefined;
         this.strToIdMap = new Map();
         this.hostnameToSlotIdMap = new Map();
         this.regexToSlotIdMap = new Map();
@@ -36,9 +34,9 @@ const StaticExtFilteringHostnameDB = class {
         // Array of strings (selectors and pseudo-selectors)
         this.strSlots = [];
         this.size = 0;
-        if ( selfie !== undefined ) {
-            this.fromSelfie(selfie);
-        }
+        this.cleanupTimer = vAPI.defer.create(( ) => {
+            this.strToIdMap.clear();
+        });
     }
 
     store(hn, bits, s) {
@@ -48,7 +46,7 @@ const StaticExtFilteringHostnameDB = class {
             iStr = this.strSlots.length;
             this.strSlots.push(s);
             this.strToIdMap.set(s, iStr);
-            if ( this.timer === undefined ) {
+            if ( this.cleanupTimer.ongoing() === false ) {
                 this.collectGarbage(true);
             }
         }
@@ -85,22 +83,11 @@ const StaticExtFilteringHostnameDB = class {
     }
 
     collectGarbage(later = false) {
-        if ( later === false ) {
-            if ( this.timer !== undefined ) {
-                self.cancelIdleCallback(this.timer);
-                this.timer = undefined;
-            }
-            this.strToIdMap.clear();
-            return;
+        if ( later ) {
+            return this.cleanupTimer.onidle(5000, { timeout: 5000 });
         }
-        if ( this.timer !== undefined ) { return; }
-        this.timer = self.requestIdleCallback(
-            ( ) => {
-                this.timer = undefined;
-                this.strToIdMap.clear();
-            },
-            { timeout: 5000 }
-        );
+        this.cleanupTimer.off();
+        this.strToIdMap.clear();
     }
 
     // modifiers = 0: all items
@@ -151,8 +138,9 @@ const StaticExtFilteringHostnameDB = class {
 
     toSelfie() {
         return {
-            hostnameToSlotIdMap: Array.from(this.hostnameToSlotIdMap),
-            regexToSlotIdMap: Array.from(this.regexToSlotIdMap),
+            version: this.version,
+            hostnameToSlotIdMap: this.hostnameToSlotIdMap,
+            regexToSlotIdMap: this.regexToSlotIdMap,
             hostnameSlots: this.hostnameSlots,
             strSlots: this.strSlots,
             size: this.size
@@ -160,11 +148,11 @@ const StaticExtFilteringHostnameDB = class {
     }
 
     fromSelfie(selfie) {
-        if ( selfie === undefined ) { return; }
-        this.hostnameToSlotIdMap = new Map(selfie.hostnameToSlotIdMap);
+        if ( typeof selfie !== 'object' || selfie === null ) { return; }
+        this.hostnameToSlotIdMap = selfie.hostnameToSlotIdMap;
         // Regex-based lookup available in uBO 1.47.0 and above
-        if ( Array.isArray(selfie.regexToSlotIdMap) ) {
-            this.regexToSlotIdMap = new Map(selfie.regexToSlotIdMap);
+        if ( selfie.regexToSlotIdMap ) {
+            this.regexToSlotIdMap = selfie.regexToSlotIdMap;
         }
         this.hostnameSlots = selfie.hostnameSlots;
         this.strSlots = selfie.strSlots;
